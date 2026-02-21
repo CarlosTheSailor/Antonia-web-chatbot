@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Demo Chatbot Embebible</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 32px;
+        background: #f3f4f6;
+      }
+      .card {
+        max-width: 760px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      }
+      code {
+        background: #eef2ff;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Demo de Chatbot Web</h1>
+      <p>
+        Esta página simula una web cliente donde se integra el chatbot usando un
+        script embebible.
+      </p>
+      <p>
+        Script usado: <code>/widget.js</code>
+      </p>
+    </div>
+
+    <script
+      src="/widget.js"
+      data-chatbot-api-base="http://localhost:3000"
+      data-chatbot-title="Asistente de Ventas"
+      data-chatbot-primary-color="#1d4ed8"
+    ></script>
+  </body>
+</html>
