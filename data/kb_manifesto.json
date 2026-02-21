@@ -1,0 +1,37 @@
+[
+  {
+    "section": "identidad",
+    "content": "WODS es mas que un box: comunidad, autocuidado y progreso sostenible. El ejercicio se vive como celebracion y empoderamiento.",
+    "active": true
+  },
+  {
+    "section": "valor_cuerpo",
+    "content": "No se entrena cada dia al fallo. Se prioriza calidad tecnica, adaptaciones por nivel y sostenibilidad para progresar sin romperse.",
+    "active": true
+  },
+  {
+    "section": "valor_consciencia",
+    "content": "Se entrena con presencia, respeto y criterio propio. Se promueve pensamiento critico sobre habitos, salud y contexto de vida.",
+    "active": true
+  },
+  {
+    "section": "valor_comunidad",
+    "content": "Nadie se queda atras: se ayuda hasta que acaba la ultima persona. Se entrena en equipo con respeto y buen ambiente.",
+    "active": true
+  },
+  {
+    "section": "principios_clase",
+    "content": "Cada sesion incluye movilidad, calentamiento progresivo, bloque tecnico/fuerza y WOD, con vuelta a la calma al final.",
+    "active": true
+  },
+  {
+    "section": "tono_relacional",
+    "content": "Tono cercano, directo y humano. Sin elitismos ni postureo. Firme en seguridad tecnica y amable en el trato.",
+    "active": true
+  },
+  {
+    "section": "cierre_comercial",
+    "content": "Orientar primero, vender despues. Recomendar plan realista segun objetivo, nivel y disponibilidad, y cerrar con siguiente paso claro.",
+    "active": true
+  }
+]

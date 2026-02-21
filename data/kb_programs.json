@@ -1,0 +1,107 @@
+[
+  {
+    "name": "CrossWODS",
+    "category": "core_classes",
+    "description": "Entrenamiento funcional que combina gimnasia, cardio, fuerza con barra y halterofilia.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "PaleoWODS",
+    "category": "core_classes",
+    "description": "Entrenamiento funcional con foco en fuerza usando peso corporal, kettlebells, balones y mancuernas.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "Strong",
+    "category": "core_classes",
+    "description": "Entreno de fuerza con barra en basicos como sentadilla, peso muerto, press y dominadas.",
+    "audience": "Intermedio/avanzado con adaptaciones",
+    "active": true
+  },
+  {
+    "name": "Handstand",
+    "category": "skill",
+    "description": "Iniciacion a la vertical, equilibrios sobre manos y trabajo de suelo/cuadrupedias.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "Halterofilia",
+    "category": "skill",
+    "description": "Tecnificacion de levantamientos olimpicos con foco en tecnica y progresion.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "Endurance",
+    "category": "conditioning",
+    "description": "Entrenamiento por estaciones con foco cardiovascular usando Air Bike, Ski y Remo.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "SuperWOD",
+    "category": "conditioning",
+    "description": "Clase mixta con componentes variados de fuerza, tecnica y acondicionamiento.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "Mobilitat",
+    "category": "mobility",
+    "description": "Trabajo de flexibilidad y movilidad articular aplicando fuerza al final del rango.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "SINES3",
+    "category": "special",
+    "description": "Entrenamiento funcional en silencio y respirando por la nariz; se trabaja sin cargas.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "PaleOCR",
+    "category": "special",
+    "description": "Clase de paleo con obstaculos. Preparacion para OCR.",
+    "audience": "Todos los niveles",
+    "active": true
+  },
+  {
+    "name": "Open Box",
+    "category": "open_training",
+    "description": "Franja para entrenar por cuenta propia con autonomia y soporte puntual del equipo.",
+    "audience": "Socios",
+    "active": true
+  },
+  {
+    "name": "Entrenamiento personal",
+    "category": "extra_services",
+    "description": "Servicio individualizado de entrenamiento con coach y flexibilidad horaria.",
+    "audience": "Segun objetivo y disponibilidad",
+    "active": true
+  },
+  {
+    "name": "Rutinas personalizadas",
+    "category": "extra_services",
+    "description": "Plan mensual adaptado a objetivos concretos o trabajo complementario.",
+    "audience": "Usuarios con objetivo especifico",
+    "active": true
+  },
+  {
+    "name": "Fisio/Osteopatia/PNI",
+    "category": "extra_services",
+    "description": "Servicio complementario para dolor, lesiones y mejora global desde enfoque integrador.",
+    "audience": "Segun necesidad",
+    "active": true
+  },
+  {
+    "name": "Nutricion y PNI clinica",
+    "category": "extra_services",
+    "description": "Acompanamiento nutricional y de habitos para objetivos de salud y rendimiento.",
+    "audience": "Segun necesidad",
+    "active": true
+  }
+]
