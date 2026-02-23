@@ -39,9 +39,15 @@
     sendButton: globalConfig.labels?.sendButton || 'Enviar',
     welcomeMessage:
       globalConfig.labels?.welcomeMessage || 'Hola, soy Antonia. Te ayudo con todo lo del box.',
-    leadTitle: globalConfig.labels?.leadTitle || 'Te dejo tu plaza preparada',
-    leadCta: globalConfig.labels?.leadCta || 'Dejar contacto'
+    scheduleLinkCta:
+      globalConfig.labels?.scheduleLinkCta ||
+      'Y si quieres ver con más detalle todos los horarios y clases, haz clic [aquí](__SCHEDULE_URL__).'
   };
+  const scheduleImageUrl = pickConfig(
+    'chatbotScheduleImageUrl',
+    globalConfig.assets?.scheduleImageUrl,
+    ''
+  );
   const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const showReset =
     typeof globalConfig.debug?.showReset === 'boolean' ? globalConfig.debug.showReset : isLocalhost;
@@ -51,8 +57,7 @@
   let latestStage = 'welcome';
   let latestUserMessage = '';
   let latestRecommendation = '';
-  let leadSent = false;
-  let leadSubmitting = false;
+  let latestCollectedFields = {};
 
   if (fonts.googleFontUrl) {
     const link = document.createElement('link');
@@ -188,6 +193,12 @@
       border-bottom-left-radius: 5px;
     }
 
+    .cbt-msg.bot a {
+      color: #ffffff;
+      text-decoration: underline;
+      font-weight: 700;
+    }
+
     .cbt-typing {
       align-self: flex-start;
       background: ${colors.surface};
@@ -202,48 +213,6 @@
 
     .cbt-typing.open {
       display: block;
-    }
-
-    .cbt-lead {
-      display: none;
-      padding: 10px;
-      gap: 8px;
-      border-top: 1px solid ${colors.border};
-      background: #111;
-    }
-
-    .cbt-lead.open {
-      display: grid;
-    }
-
-    .cbt-lead-title {
-      color: ${colors.text};
-      font-weight: 700;
-      font-size: 13px;
-    }
-
-    .cbt-field {
-      border: 1px solid ${colors.border};
-      border-radius: 10px;
-      padding: 9px;
-      font-size: 13px;
-      color: ${colors.text};
-      background: #1a1a1a;
-      outline: none;
-    }
-
-    .cbt-field::placeholder {
-      color: ${colors.mutedText};
-    }
-
-    .cbt-lead-btn {
-      border: none;
-      border-radius: 10px;
-      background: ${colors.accent};
-      color: #fff;
-      font-weight: 700;
-      padding: 10px;
-      cursor: pointer;
     }
 
     .cbt-form {
@@ -315,12 +284,6 @@
     </div>
     <div class="cbt-messages" id="cbt-messages"></div>
     <div class="cbt-typing" id="cbt-typing">Antonia está pensando...</div>
-    <div class="cbt-lead" id="cbt-lead">
-      <div class="cbt-lead-title">${labels.leadTitle}</div>
-      <input class="cbt-field" id="cbt-lead-name" placeholder="Tu nombre (opcional)" />
-      <input class="cbt-field" id="cbt-lead-contact" placeholder="WhatsApp o telefono" />
-      <button class="cbt-lead-btn" id="cbt-lead-submit" type="button">${labels.leadCta}</button>
-    </div>
     <form class="cbt-form" id="cbt-form">
       <input class="cbt-input" id="cbt-input" placeholder="${labels.inputPlaceholder}" autocomplete="off" />
       <button class="cbt-send" type="submit">${labels.sendButton}</button>
@@ -335,10 +298,6 @@
   const typingEl = container.querySelector('#cbt-typing');
   const formEl = container.querySelector('#cbt-form');
   const inputEl = container.querySelector('#cbt-input');
-  const leadEl = container.querySelector('#cbt-lead');
-  const leadNameEl = container.querySelector('#cbt-lead-name');
-  const leadContactEl = container.querySelector('#cbt-lead-contact');
-  const leadSubmitEl = container.querySelector('#cbt-lead-submit');
   const resetEl = container.querySelector('#cbt-reset');
 
   function appendMessage(sender, text) {
@@ -353,7 +312,11 @@
 
     function formatMessage(input) {
       const escaped = escapeHtml(input);
-      return escaped
+      const withMarkdownLinks = escaped.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+      return withMarkdownLinks
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\n/g, '<br />');
     }
@@ -372,14 +335,6 @@
       typingEl.classList.remove('open');
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-
-  function toggleLeadForm(shouldOpen) {
-    if (shouldOpen && latestStage === 'close' && !leadSent) {
-      leadEl.classList.add('open');
-    } else {
-      leadEl.classList.remove('open');
-    }
   }
 
   async function sendMessage(message) {
@@ -401,8 +356,18 @@
 
       latestStage = data.stage || latestStage;
       latestRecommendation = data.recommendation || latestRecommendation;
-      appendMessage('bot', data.reply || 'No pude responder en este momento.');
-      toggleLeadForm(Boolean(data.leadCaptureRequested));
+      latestCollectedFields = data.collectedFields || latestCollectedFields || {};
+      let botReply = data.reply || 'No pude responder en este momento.';
+      const lowerUser = String(message || '').toLowerCase();
+      const lowerReply = String(botReply || '').toLowerCase();
+      const asksSchedule = /(horario|horarios|dias|días|agenda)/.test(lowerUser);
+      const mentionsSchedule = /(horario|horarios|dias|días)/.test(lowerReply);
+      const hasLink = /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/.test(botReply);
+      if (scheduleImageUrl && (asksSchedule || mentionsSchedule) && !hasLink) {
+        const line = labels.scheduleLinkCta.replace('__SCHEDULE_URL__', scheduleImageUrl);
+        botReply = `${botReply}\n\n${line}`;
+      }
+      appendMessage('bot', botReply);
     } catch (error) {
       appendMessage('bot', 'Error de conexion con el servidor del chatbot.');
       console.error(error);
@@ -411,72 +376,14 @@
     }
   }
 
-  async function submitLead() {
-    if (leadSubmitting || leadSent) return;
-
-    const name = leadNameEl.value.trim();
-    const contact = leadContactEl.value.trim();
-
-    if (!sessionId) {
-      appendMessage('bot', 'Primero necesitamos que me cuentes un poco y luego te pido el contacto.');
-      return;
-    }
-
-    if (!contact) {
-      appendMessage('bot', 'Para avisarte desde recepción necesito tu WhatsApp o teléfono.');
-      return;
-    }
-
-    try {
-      leadSubmitting = true;
-      leadSubmitEl.disabled = true;
-      leadSubmitEl.textContent = 'Enviando...';
-
-      const response = await fetch(`${apiBase}/api/lead`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          name: name || null,
-          contact,
-          notes: latestUserMessage || null,
-          recommendedPlan: latestRecommendation || null
-        })
-      });
-
-      if (!response.ok) throw new Error(`Error ${response.status}`);
-      leadSent = true;
-      toggleLeadForm(false);
-      leadNameEl.value = '';
-      leadContactEl.value = '';
-      appendMessage(
-        'bot',
-        'Perfecto. Recepción te escribe por WhatsApp para cerrar tu prueba y recomendarte el mejor plan.'
-      );
-    } catch (error) {
-      appendMessage('bot', 'No pude guardar el contacto ahora. Si quieres, vuelve a intentarlo en un momento.');
-      console.error(error);
-    } finally {
-      leadSubmitting = false;
-      leadSubmitEl.disabled = false;
-      leadSubmitEl.textContent = labels.leadCta;
-    }
-  }
-
   function resetConversation() {
     sessionId = null;
     latestStage = 'welcome';
     latestUserMessage = '';
     latestRecommendation = '';
-    leadSent = false;
-    leadSubmitting = false;
+    latestCollectedFields = {};
     localStorage.removeItem(storageKey);
     messagesEl.innerHTML = '';
-    leadNameEl.value = '';
-    leadContactEl.value = '';
-    toggleLeadForm(false);
-    leadSubmitEl.disabled = false;
-    leadSubmitEl.textContent = labels.leadCta;
     appendMessage('bot', labels.welcomeMessage);
     appendMessage(
       'bot',
@@ -498,7 +405,6 @@
     sendMessage(message);
   });
 
-  leadSubmitEl.addEventListener('click', submitLead);
   if (showReset) {
     resetEl.addEventListener('click', resetConversation);
   }

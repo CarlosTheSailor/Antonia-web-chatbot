@@ -6,414 +6,234 @@ const {
   saveMessage,
   updateSession
 } = require('./sessionService');
-const { recommendPlan } = require('./recommendationService');
+const { createLead } = require('./leadService');
+const { runPostBookingIntegrations } = require('./bookingIntegrationService');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-const FREE_CLASS_URL = 'https://wods.es/clase-gratis/';
-const DAY_NAME = {
-  1: 'Lunes',
-  2: 'Martes',
-  3: 'Miércoles',
-  4: 'Jueves',
-  5: 'Viernes',
-  6: 'Sábado',
-  7: 'Domingo'
-};
+const ALLOWED_STAGES = new Set(['welcome', 'discover', 'recommend', 'close']);
+const ALLOWED_FIELDS = new Set([
+  'name',
+  'howHeard',
+  'experienceLevel',
+  'activityLevel',
+  'goal',
+  'injuryNotes',
+  'injuryAsked',
+  'availability',
+  'contact',
+  'trainingBackground',
+  'recommendedClass'
+]);
 
-function detectExperienceLevel(text) {
-  const value = String(text || '').toLowerCase();
-  if (value.includes('principiante') || value.includes('nunca') || value.includes('empiezo')) {
-    return 'beginner';
-  }
-  if (value.includes('intermedio')) return 'intermediate';
-  if (value.includes('avanzado') || value.includes('compito')) return 'advanced';
-  return 'unknown';
-}
-
-function inferFields({ session, message }) {
-  const collected = { ...(session.collected_fields || {}) };
-  const lower = message.toLowerCase();
-
-  if (!collected.goal && /(objetivo|quiero|me gustaria|busco|perder|fuerza|forma)/.test(lower)) {
-    collected.goal = message;
-  }
-
-  if (
-    !collected.goal &&
-    /(hyrox|ocr|obstac|jiu|bjj|haltero|calistenia|movilidad|movilitat|salud)/.test(lower)
-  ) {
-    collected.goal = message;
-  }
-
-  if (!collected.availability && /(lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|noche|horario)/.test(lower)) {
-    collected.availability = message;
-  }
-
-  if (!collected.experienceLevel) {
-    const level = detectExperienceLevel(message);
-    if (level !== 'unknown') collected.experienceLevel = level;
-  }
-
-  if (!collected.contact && /(\+?\d{8,}|@|whatsapp|telefono|tel\b)/.test(lower)) {
-    collected.contact = message;
-  }
-
-  if (
-    !collected.trainingBackground &&
-    /(crossfit|haltero|halterofilia|gym|gimnasio|box|entreno|entrenado|fuerza)/.test(lower)
-  ) {
-    collected.trainingBackground = message;
-  }
-
-  if (!collected.activityLevel && /(sedentari|activo|diario|2-3|ocasional|nunca)/.test(lower)) {
-    collected.activityLevel = message;
-  }
-
-  if (
-    !collected.howHeard &&
-    /(os conoci|conoci por|os vi en|instagram|google|recomend|amig|coleg|pasaba por|vi la web|redes)/.test(
-      lower
-    )
-  ) {
-    collected.howHeard = message;
-  }
-
-  if (
-    !collected.injuryNotes &&
-    /(lesion|lesión|molestia|dolor|duele|rodilla|espalda|hombro|cadera)/.test(lower)
-  ) {
-    collected.injuryNotes = message;
-  }
-
-  if (
-    !collected.injuryAsked &&
-    /(lesion|lesión|molestia|dolor|duele|ninguna|ninguno|no tengo|sin molestias)/.test(lower)
-  ) {
-    collected.injuryAsked = true;
-  }
-
-  if (!collected.injuryAsked && collected.injuryNotes) {
-    collected.injuryAsked = true;
-  }
-
-  if (/ya te lo he dicho|ya lo dije|ya te dije/.test(lower) && collected.injuryNotes) {
-    collected.injuryAsked = true;
-  }
-
-  return collected;
-}
-
-function isFactualQuestion(message) {
-  const lower = message.toLowerCase();
-  return /(precio|coste|cuanto|horario|hora|clase|servicio)/.test(lower);
-}
-
-function nextStage({ collectedFields, currentStage }) {
-  const hasMandatory = Boolean(
-    collectedFields.howHeard &&
-      collectedFields.experienceLevel &&
-      collectedFields.activityLevel &&
-      collectedFields.goal &&
-      collectedFields.availability &&
-      collectedFields.injuryAsked
-  );
-
-  if (currentStage === 'welcome') return 'discover';
-  if (!hasMandatory) return 'discover';
-  if (currentStage === 'close') return 'close';
-  if (currentStage === 'recommend') return 'close';
-  return 'recommend';
-}
-
-function selectPlaybookSection(playbook, stage) {
-  const section = playbook.find((entry) => entry.section === stage);
-  return section?.content || '';
-}
-
-function selectToneExamples(toneExamples) {
-  return toneExamples.slice(0, 2);
-}
-
-function buildSystemPrompt({ stage, knowledgeSnapshot, playbookText, toneExamples, sessionSummary }) {
-  const toneText = toneExamples
-    .map((item, idx) => `Ejemplo ${idx + 1} Usuario: ${item.user_example}\nEjemplo ${idx + 1} Antonia: ${item.assistant_example}`)
-    .join('\n\n');
-
-  return [
-    'Eres Antonia, recepción de WODS. Tu objetivo es orientar a nuevos clientes y convertirlos en lead.',
-    'Debes respirar la identidad de WODS: cercanía, técnica, sostenibilidad, comunidad y cero postureo.',
-    'Reglas estrictas:',
-    '- Responde en español de calle, natural y directa. Cero tono corporativo.',
-    '- Tutea siempre. Frases cortas. Nada de párrafos largos.',
-    '- Máximo 4 líneas por respuesta y 1 pregunta por turno.',
-    '- Si el usuario pide mucha info (clases/precios/horarios), da un resumen corto (2-3 líneas) y sigue con el flujo.',
-    '- Máximo 1 pregunta nueva por turno.',
-    '- Explica las clases y servicios usando el contexto del manifiesto y programas, no solo precios.',
-    '- Si preguntan por precio/horario, responde primero con datos del contexto y luego retoma el discovery.',
-    '- Nunca inventes precios u horarios. Si falta info, di que lo confirma recepcion por WhatsApp.',
-    '- No hagas diagnóstico médico.',
-    '- Si alguien tiene miedo o inseguridad, refuerza que se adapta por nivel y que la técnica va antes que el ego.',
-    '- Orden de discovery prioritario: cómo nos conoció -> experiencia/actividad -> objetivo -> molestias -> disponibilidad.',
-    '- Si viene recomendado, recuerda beneficio de 10 EUR para ambas partes al domiciliar primer pack.',
-    '- Evita recomendar viernes para primeras pruebas de gente sin experiencia crossfit; si solo puede viernes, avisa que es más duro.',
-    '- Si etapa=discover: NO cierres ni pases link de clase gratis todavía.',
-    '- En cierre, invita siempre a apuntarse a la clase gratis con este enlace: https://wods.es/clase-gratis/',
-    '- Antes de despedirte, pregunta siempre cómo nos ha conocido la persona (salvo que ya lo haya dicho).',
-    '- Cierra con CTA cuando tengas suficiente información.',
-    `Etapa actual: ${stage}`,
-    `Resumen de sesion: ${sessionSummary}`,
-    `Programas y servicios entrenables:\n${knowledgeSnapshot.programsText}`,
-    `Manifiesto y valores:\n${knowledgeSnapshot.manifestoText}`,
-    `Servicios:\n${knowledgeSnapshot.servicesText}`,
-    `Horarios:\n${knowledgeSnapshot.scheduleText}`,
-    `Guion operativo:\n${playbookText || 'No disponible'}`,
-    `Tono esperado:\n${toneText || 'No disponible'}`
-  ].join('\n\n');
-}
-
-function enforceClosePolicy({ stage, reply, collectedFields }) {
-  if (stage !== 'close') return reply;
-
-  const baseReply = String(reply || '').trim();
-  const needsFreeClassLink =
-    !baseReply.includes(FREE_CLASS_URL) && !/clase gratis/i.test(baseReply);
-  const needsHowHeardQuestion =
-    !collectedFields?.howHeard && !/como nos (has )?conocid/i.test(baseReply);
-
-  const blocks = [baseReply];
-  if (needsFreeClassLink) {
-    blocks.push(`Si te cuadra, puedes apuntarte ya a la clase gratis aquí: ${FREE_CLASS_URL}`);
-  }
-  if (needsHowHeardQuestion) {
-    blocks.push('Antes de cerrar, me ayudaría saber: ¿cómo nos has conocido?');
-  }
-
-  return blocks.filter(Boolean).join('\n\n');
-}
-
-function enforceRecommendationPolicy({ stage, reply, recommendation }) {
-  if (stage !== 'recommend') return reply;
-  const recText = String(recommendation || '').trim();
-  if (!recText) return String(reply || '').trim();
-  return recText;
-}
-
-function getNextDiscoveryQuestion(collectedFields) {
-  if (!collectedFields?.howHeard) {
-    return '¿Cómo nos has conocido? (Google, Instagram, recomendación, barrio...)';
-  }
-  if (!collectedFields?.experienceLevel) {
-    return '¿Qué nivel tienes en fuerza funcional/cross? (principiante, intermedio o avanzado)';
-  }
-  if (!collectedFields?.activityLevel) {
-    return '¿Ahora mismo haces ejercicio? (a diario, 2-3 veces/semana, ocasional o casi nada)';
-  }
-  if (!collectedFields?.goal) {
-    return '¿Cuál es tu objetivo principal ahora? (salud, fuerza, cardio, OCR/Hyrox, BJJ...)';
-  }
-  if (!collectedFields?.injuryAsked && !collectedFields?.injuryNotes) {
-    return '¿Tienes alguna molestia o lesión que debamos tener en cuenta para adaptarte el entreno?';
-  }
-  if (!collectedFields?.availability) {
-    return '¿Qué disponibilidad tienes para entrenar? (días y franja horaria)';
-  }
-  return null;
-}
-
-function messageLooksLikeInfoRequest(text) {
-  const lower = String(text || '').toLowerCase();
-  return /(informacion|información|precio|precios|horario|horarios|clase|clases|tarifa)/.test(lower);
-}
-
-function detectInfoIntent(text) {
-  const lower = String(text || '').toLowerCase();
-  return {
-    asksClasses: /(que clases|qué clases|tipos de clase|tipos de entrenamiento|clases hay)/.test(lower),
-    asksPrices: /(precio|precios|tarifa|tarifas|pack|packs|bono|bonos)/.test(lower),
-    asksSchedules: /(horario|horarios|que dias|qué días|a que hora|a qué hora)/.test(lower),
-    asksRecommendedSchedules: /(horarios.*mobilitat|horarios.*funcional|horarios.*cross|horarios.*strong|horarios.*hibrid)/.test(lower)
-  };
-}
-
-function normalizeClassName(text) {
+function normalizeText(text) {
   return String(text || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-function extractAskedClasses(text) {
-  const normalized = normalizeClassName(text);
-  const map = [
-    { key: 'mobilitat', name: 'Mobilitat' },
-    { key: 'funcional', name: 'Funcional' },
-    { key: 'cross', name: 'Cross' },
-    { key: 'strong', name: 'Strong' },
-    { key: 'hibrido', name: 'Híbrido' },
-    { key: 'hibrid', name: 'Híbrido' },
-    { key: 'sines3', name: 'SINES3' }
-  ];
-  const out = [];
-  for (const item of map) {
-    if (normalized.includes(item.key) && !out.includes(item.name)) out.push(item.name);
-  }
-  return out;
-}
+function shouldTriggerLeadCapture({ userMessage, lastAssistantText }) {
+  const user = normalizeText(userMessage);
+  const lastAssistant = normalizeText(lastAssistantText);
 
-function uniqueSlots(schedule, className) {
-  const target = normalizeClassName(className);
-  const rows = (schedule || []).filter((row) =>
-    normalizeClassName(row.class_name).includes(target)
+  const directBooking = /(reserv|apunt|anot|clase gratis|quiero probar|quiero venir|me apunto|agend)/.test(
+    user
   );
-  const seen = new Set();
-  const unique = [];
-  for (const row of rows) {
-    const hhmm = String(row.start_time || '').slice(0, 5);
-    const key = `${row.day_of_week}-${hhmm}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push({ day_of_week: row.day_of_week, time: hhmm });
+  if (directBooking) return true;
+
+  const affirmativeOnly = /^(si|sí|vale|ok|perfecto|dale|de una|claro|por supuesto)[.! ]*$/.test(
+    user.trim()
+  );
+  const assistantAskedBooking = /(quieres.*reserv|te.*reserv|apuntarte.*clase gratis|te cierro.*clase gratis|quieres que te reserve)/.test(
+    lastAssistant
+  );
+
+  return affirmativeOnly && assistantAskedBooking;
+}
+
+function hasSpecificSlot(text) {
+  const value = normalizeText(text);
+  const hasDay = /(lunes|martes|miercoles|jueves|viernes|sabado|domingo|entre semana|fin de semana)/.test(
+    value
+  );
+  const hasHour = /\b([01]?\d|2[0-3])(:[0-5]\d)?\b/.test(value);
+  return hasDay && hasHour;
+}
+
+function parseBookingSlot(text) {
+  const value = normalizeText(text);
+  const dayMatch = value.match(/lunes|martes|miercoles|jueves|viernes|sabado|domingo/);
+  const hourMatch = value.match(/\b([01]?\d|2[0-3])(:[0-5]\d)?\b/);
+  if (!dayMatch || !hourMatch) return null;
+  const day = dayMatch[0];
+  const hh = String(hourMatch[1]).padStart(2, '0');
+  const mm = hourMatch[2] || ':00';
+  return { day, time: `${hh}${mm}` };
+}
+
+function buildReservationKey(sessionId, slot, phone) {
+  if (!slot?.day || !slot?.time || !phone) return null;
+  return `${sessionId}|${slot.day}|${slot.time}|${String(phone).replace(/\s+/g, '')}`;
+}
+
+function hasValidPhone(value) {
+  return /(\+?\d[\d\s-]{7,})/.test(String(value || ''));
+}
+
+function hasFullName(value) {
+  const parts = String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return parts.length >= 2;
+}
+
+function getMissingFields(collectedFields) {
+  const fields = collectedFields || {};
+  const missing = [];
+  if (!fields.howHeard) missing.push('howHeard');
+  if (!fields.experienceLevel || fields.experienceLevel === 'unknown') missing.push('experienceLevel');
+  if (!fields.activityLevel) missing.push('activityLevel');
+  if (!fields.goal) missing.push('goal');
+  if (!fields.availability) missing.push('availability');
+  if (!fields.injuryNotes && fields.injuryAsked !== true) missing.push('injuryNotes');
+  return missing;
+}
+
+function normalizeStage(stage, fallback) {
+  const value = String(stage || '').toLowerCase();
+  return ALLOWED_STAGES.has(value) ? value : fallback;
+}
+
+function sanitizeCollectedFields(nextFields, previousFields) {
+  const safe = { ...(previousFields || {}) };
+  if (!nextFields || typeof nextFields !== 'object') return safe;
+
+  for (const [key, value] of Object.entries(nextFields)) {
+    if (!ALLOWED_FIELDS.has(key)) continue;
+    if (value === null || value === undefined) continue;
+    if (typeof value === 'string' && !value.trim()) continue;
+    safe[key] = value;
   }
-  return unique.sort((a, b) => a.day_of_week - b.day_of_week || a.time.localeCompare(b.time));
+
+  return safe;
 }
 
-function formatScheduleBlock(schedule, classNames) {
-  const lines = [];
-  for (const name of classNames) {
-    const slots = uniqueSlots(schedule, name);
-    if (!slots.length) continue;
-    lines.push(`**${name}**`);
-    for (const slot of slots) {
-      lines.push(`- ${DAY_NAME[slot.day_of_week] || `Día ${slot.day_of_week}`} ${slot.time}`);
-    }
-  }
-  return lines.join('\n');
+function selectPlaybookSection(playbook, stage) {
+  const section = (playbook || []).find((entry) => entry.section === stage);
+  return section?.content || '';
 }
 
-function summarizePrices(services) {
-  const wanted = ['Pack 4 clases', 'Pack 9 sesiones', 'Pack 12 sesiones', 'Pack ilimitado'];
-  const rows = wanted
-    .map((name) => (services || []).find((s) => s.name === name))
-    .filter(Boolean)
-    .map((s) => `${s.name}: ${s.price_text}`);
-  return rows.join(' | ');
+function selectToneExamples(toneExamples) {
+  return (toneExamples || []).slice(0, 2);
 }
 
-function buildInfoReply({ message, kb }) {
-  const intent = detectInfoIntent(message);
-  if (!intent.asksClasses && !intent.asksPrices && !intent.asksSchedules) return null;
+function buildSystemPrompt({
+  stageHint,
+  knowledgeSnapshot,
+  playbookText,
+  toneExamples,
+  sessionSummary,
+  collectedFieldsSummary,
+  missingFieldsSummary,
+  lastAssistantQuestion
+}) {
+  const toneText = toneExamples
+    .map(
+      (item, idx) =>
+        `Ejemplo ${idx + 1} Usuario: ${item.user_example}\nEjemplo ${idx + 1} Antonia: ${item.assistant_example}`
+    )
+    .join('\n\n');
 
-  const lines = [];
-  const askedClasses = extractAskedClasses(message);
-
-  if (intent.asksClasses) {
-    lines.push('Claro, resumen rápido:');
-    lines.push('**Tipos de clase**: Cross, Funcional, Híbrido, Strong, Mobilitat y SINES3.');
-  }
-
-  if (intent.asksPrices) {
-    const priceLine = summarizePrices(kb.services);
-    if (priceLine) lines.push(`**Packs principales**: ${priceLine}.`);
-  }
-
-  if (intent.asksSchedules) {
-    if (askedClasses.length) {
-      const block = formatScheduleBlock(kb.schedule, askedClasses);
-      if (block) {
-        lines.push('**Horarios por clase**:');
-        lines.push(block);
-      }
-    } else {
-      lines.push('**Horarios**: tenemos clases desde las 07:00 hasta la noche según el día y el tipo.');
-    }
-  }
-
-  return lines.join('\n\n');
+  return [
+    'Eres Antonia, recepción de WODS.',
+    'Objetivo: orientar a nuevos clientes, recomendar clase adecuada y cerrar con clase gratis de bienvenida.',
+    'Tono: cercano, canalla, directo, cero corporativo, español natural con tildes.',
+    'Reglas:',
+    '- Haz respuestas cortas (2-4 líneas).',
+    '- Haz solo 1 pregunta nueva por turno.',
+    '- No repitas una pregunta ya respondida.',
+    '- Si el usuario responde con "sí/no/vale/ok" o una frase muy corta, interprétalo como respuesta a la última pregunta del asistente.',
+    '- Si un campo ya está recogido en "Campos ya recogidos", NO lo vuelvas a preguntar.',
+    '- En cada turno, si haces pregunta, que sea sobre 1 campo pendiente concreto.',
+    '- Si el usuario dice algo genérico como "clases", "horarios" o "clases y horarios", NO sueltes la agenda completa por días.',
+    '- En ese caso, da solo un resumen de tipos de clase (Cross, Funcional, Híbrido, Strong, Mobilitat, SINES3) y enlaza a discovery: "para recomendarte bien, te hago unas preguntas rápidas".',
+    '- Solo da horarios detallados por día/hora cuando el usuario lo pida explícitamente o cuando ya haya 1-2 clases recomendadas.',
+    '- Si preguntan clases/precios/horarios, responde primero y luego sigue el discovery.',
+    '- Nunca inventes horarios ni precios.',
+    '- No hagas diagnóstico médico.',
+    '- Si etapa=close, incluye CTA a https://wods.es/clase-gratis/.',
+    '- Flujo de cierre obligatorio: 1) preguntar si quiere reservar clase gratis, 2) si dice que sí, pedir día y hora concretos, 3) después pedir nombre completo y número de teléfono en el propio chat.',
+    '- No pidas nombre/teléfono ni actives cierre final si todavía no hay día y hora concretos de prueba.',
+    '- Cuando ya tengas nombre completo y teléfono, confirma la reserva de forma clara en el chat y no vuelvas a pedir esos datos.',
+    '- No menciones ni uses formularios; todo se cierra por chat.',
+    '- Si ya tenemos cómo nos conoció, NO vuelvas a preguntar eso en cierre.',
+    '- Antes de despedirte, asegúrate de haber preguntado cómo nos conoció.',
+    '- Si viene recomendado, explica una sola vez el beneficio de 10 EUR.',
+    '- Ejemplo correcto si el usuario dice "clases horarios": "Tenemos varios tipos de clase: Cross, Funcional, Híbrido, Strong, Mobilitat y SINES3. Si quieres, te recomiendo las que mejor te encajan y luego te paso horarios concretos. Para afinarlo, ¿cuál es tu objetivo principal ahora mismo?".',
+    '',
+    'Devuelve SIEMPRE JSON válido con esta forma exacta:',
+    '{',
+    '  "reply": "string",',
+    '  "stage": "welcome|discover|recommend|close",',
+    '  "leadCaptureRequested": true|false,',
+    '  "collectedFields": {',
+    '    "name": "string opcional",',
+    '    "howHeard": "string opcional",',
+    '    "experienceLevel": "beginner|intermediate|advanced|unknown opcional",',
+    '    "activityLevel": "string opcional",',
+    '    "goal": "string opcional",',
+    '    "injuryNotes": "string opcional",',
+    '    "injuryAsked": true|false opcional,',
+    '    "availability": "string opcional",',
+    '    "contact": "string opcional",',
+    '    "trainingBackground": "string opcional",',
+    '    "recommendedClass": "string opcional"',
+    '  },',
+    '  "recommendation": "string opcional"',
+    '}',
+    '',
+    `Etapa sugerida actual: ${stageHint}`,
+    `Resumen de sesión: ${sessionSummary}`,
+    `Última pregunta del asistente: ${lastAssistantQuestion || 'No disponible'}`,
+    `Campos ya recogidos: ${collectedFieldsSummary}`,
+    `Campos pendientes prioritarios: ${missingFieldsSummary}`,
+    `Programas y servicios:\n${knowledgeSnapshot.programsText}`,
+    `Manifiesto y valores:\n${knowledgeSnapshot.manifestoText}`,
+    `Servicios:\n${knowledgeSnapshot.servicesText}`,
+    `Horarios:\n${knowledgeSnapshot.scheduleText}`,
+    `Guion operativo:\n${playbookText || 'No disponible'}`,
+    `Tono esperado:\n${toneText || 'No disponible'}`
+  ].join('\n');
 }
 
-function stripEarlyCta(text) {
-  return String(text || '')
-    .replace(new RegExp(FREE_CLASS_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '')
-    .replace(/clase gratis[^.\n!?]*/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function stripReferralReminder(text) {
-  return String(text || '')
-    .replace(/.*10\s*e(?:ur)?\s+de\s+descuento.*$/gim, '')
-    .replace(/.*si vienes recomendado.*$/gim, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function stripQuestionLines(text) {
-  return String(text || '')
-    .split('\n')
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return true;
-      return !trimmed.includes('?') && !trimmed.startsWith('¿');
-    })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function shortenDiscoverReply(text, maxChars = 300) {
+function extractJsonObject(text) {
   const raw = String(text || '').trim();
-  if (!raw) return raw;
-  const normalized = raw.replace(/\s+/g, ' ');
-  const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
-  const short = sentences.slice(0, 2).join(' ');
-  if (short.length <= maxChars) return short;
-  return `${short.slice(0, maxChars).trim()}...`;
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch (_) {}
+
+  const match = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  const candidate = match[1] || match[0];
+  try {
+    return JSON.parse(candidate);
+  } catch (_) {
+    return null;
+  }
 }
 
-function enforceReceptionPolicy({ stage, reply, collectedFields, userMessage }) {
-  if (stage !== 'discover') {
-    return { reply, collectedFields };
-  }
-  const baseReply = stripEarlyCta(reply);
-  const updatedFields = { ...(collectedFields || {}) };
-
-  const blocks = [baseReply];
-
-  const heardText = String(collectedFields?.howHeard || '').toLowerCase();
-  const isReferral = /recomend|amig|socio|socia/.test(heardText);
-  const hasReferralReminder = /10\s*e|10\s*eur|descuento/.test(baseReply);
-  const alreadyInformed = Boolean(collectedFields?.referralDiscountExplained);
-  if (isReferral && hasReferralReminder) {
-    updatedFields.referralDiscountExplained = true;
-  }
-  if (alreadyInformed && hasReferralReminder) {
-    blocks[0] = stripReferralReminder(blocks[0]);
-  }
-  if (isReferral && !hasReferralReminder && !alreadyInformed && !updatedFields.referralDiscountExplained) {
-    blocks.push(
-      'Si vienes recomendado por un socio/a y finalmente te apuntas, recordad decirnos su nombre: tenéis 10 EUR de descuento ambos al mes siguiente al domiciliar el primer pack.'
-    );
-    updatedFields.referralDiscountExplained = true;
-  }
-
-  const nextQuestion = getNextDiscoveryQuestion(updatedFields);
-  if (nextQuestion) {
-    blocks[0] = shortenDiscoverReply(stripQuestionLines(blocks[0]));
-    if (!updatedFields.howHeard && messageLooksLikeInfoRequest(userMessage)) {
-      blocks.push('Te hago primero un resumen rápido y ahora te amplío todo con detalle.');
-    }
-    blocks.push(nextQuestion);
-  }
-
-  return {
-    reply: blocks.filter(Boolean).join('\n\n'),
-    collectedFields: updatedFields
-  };
-}
-
-async function generateAssistantReply({ stage, message, history, systemPrompt }) {
+async function generateAssistantTurn({ message, history, systemPrompt }) {
   if (!isOpenAiEnabled()) {
-    return 'Estoy en modo demo. Ya te puedo orientar, pero para respuestas inteligentes activa OPENAI_API_KEY.';
+    return {
+      reply: 'Estoy en modo demo. Activa OPENAI_API_KEY para respuestas inteligentes.',
+      stage: 'discover',
+      leadCaptureRequested: false,
+      collectedFields: {},
+      recommendation: null
+    };
   }
 
   const historyMessages = history.map((item) => ({
@@ -423,7 +243,60 @@ async function generateAssistantReply({ stage, message, history, systemPrompt })
 
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
-    temperature: 0.7,
+    temperature: 0.5,
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'antonia_turn',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            reply: { type: 'string' },
+            stage: { type: 'string', enum: ['welcome', 'discover', 'recommend', 'close'] },
+            leadCaptureRequested: { type: 'boolean' },
+            collectedFields: {
+              type: 'object',
+              properties: {
+                name: { type: ['string', 'null'] },
+                howHeard: { type: ['string', 'null'] },
+                experienceLevel: {
+                  anyOf: [
+                    { type: 'string', enum: ['beginner', 'intermediate', 'advanced', 'unknown'] },
+                    { type: 'null' }
+                  ]
+                },
+                activityLevel: { type: ['string', 'null'] },
+                goal: { type: ['string', 'null'] },
+                injuryNotes: { type: ['string', 'null'] },
+                injuryAsked: { type: ['boolean', 'null'] },
+                availability: { type: ['string', 'null'] },
+                contact: { type: ['string', 'null'] },
+                trainingBackground: { type: ['string', 'null'] },
+                recommendedClass: { type: ['string', 'null'] }
+              },
+              required: [
+                'name',
+                'howHeard',
+                'experienceLevel',
+                'activityLevel',
+                'goal',
+                'injuryNotes',
+                'injuryAsked',
+                'availability',
+                'contact',
+                'trainingBackground',
+                'recommendedClass'
+              ],
+              additionalProperties: false
+            },
+            recommendation: { type: ['string', 'null'] }
+          },
+          required: ['reply', 'stage', 'leadCaptureRequested', 'collectedFields', 'recommendation'],
+          additionalProperties: false
+        }
+      }
+    },
     messages: [
       { role: 'system', content: systemPrompt },
       ...historyMessages,
@@ -431,79 +304,163 @@ async function generateAssistantReply({ stage, message, history, systemPrompt })
     ]
   });
 
-  return (
-    response.choices?.[0]?.message?.content?.trim() ||
-    'Ahora mismo no pude responder bien. Si quieres, te dejo en contacto con recepcion.'
-  );
+  const content = response.choices?.[0]?.message?.content || '';
+  const parsed = extractJsonObject(content);
+  if (parsed) return parsed;
+
+  return {
+    reply: String(content || '').trim() || 'Ahora mismo no pude responder bien. ¿Me repites en una frase qué necesitas?',
+    stage: 'discover',
+    leadCaptureRequested: false,
+    collectedFields: {},
+    recommendation: null
+  };
 }
 
 async function processChatTurn({ sessionId, message }) {
   const session = await getOrCreateSession(sessionId);
   const kb = await getKnowledgeBase();
-  const collectedFields = inferFields({ session, message });
-  const draftStage = nextStage({ collectedFields, currentStage: session.last_stage || 'welcome' });
+  const history = await getSessionMessages(session.id, 12);
 
-  const recommendation =
-    draftStage === 'recommend' || session.last_stage === 'recommend'
-      ? recommendPlan({
-          goal: collectedFields.goal,
-          experienceLevel: collectedFields.experienceLevel || 'unknown',
-          availability: collectedFields.availability,
-          services: kb.services,
-          schedule: kb.schedule,
-          trainingBackground: collectedFields.trainingBackground || '',
-          activityLevel: collectedFields.activityLevel || '',
-          injuryNotes: collectedFields.injuryNotes || ''
-        })
-      : session.last_recommendation || null;
-
-  const stage = draftStage;
-  const leadCaptureRequested = stage === 'close';
-
+  const previousFields = session.collected_fields || {};
+  const missingFields = getMissingFields(previousFields);
+  const stageHint = normalizeStage(session.last_stage || 'welcome', 'welcome');
   const knowledgeSnapshot = buildKnowledgeSnapshot(kb);
-  const playbookText = selectPlaybookSection(kb.playbook, stage);
+  const playbookText = selectPlaybookSection(kb.playbook, stageHint);
   const toneExamples = selectToneExamples(kb.toneExamples);
-  const history = await getSessionMessages(session.id, 10);
-  const factualHint = isFactualQuestion(message) ? 'Pregunta factual detectada.' : 'Pregunta de discovery.';
+  const sessionSummary = JSON.stringify({
+    stage: stageHint,
+    collectedFields: previousFields,
+    previousRecommendation: session.last_recommendation || null
+  });
+  const lastAssistantQuestion =
+    [...history]
+      .reverse()
+      .find((msg) => msg.role === 'assistant' && /\?/.test(String(msg.content || '')))
+      ?.content || '';
+
   const systemPrompt = buildSystemPrompt({
-    stage,
+    stageHint,
     knowledgeSnapshot,
     playbookText,
     toneExamples,
-    sessionSummary: JSON.stringify({ ...collectedFields, recommendation, factualHint })
+    sessionSummary,
+    collectedFieldsSummary: JSON.stringify(previousFields),
+    missingFieldsSummary: missingFields.length ? missingFields.join(', ') : 'ninguno',
+    lastAssistantQuestion
   });
 
-  const rawReply = await generateAssistantReply({
-    stage,
+  const modelTurn = await generateAssistantTurn({
     message,
     history,
     systemPrompt
   });
-  const deterministicInfoReply = buildInfoReply({ message, kb });
-  const stageSanitizedReply = stage === 'close' ? rawReply : stripEarlyCta(rawReply);
-  const receptionAligned = enforceReceptionPolicy({
-    stage,
-    reply: deterministicInfoReply || stageSanitizedReply,
-    collectedFields,
-    userMessage: message
+
+  const stage = normalizeStage(modelTurn.stage, stageHint === 'welcome' ? 'discover' : stageHint);
+  const collectedFields = sanitizeCollectedFields(modelTurn.collectedFields, previousFields);
+  const bookingConsentThisTurn = shouldTriggerLeadCapture({
+    userMessage: message,
+    lastAssistantText: history?.[history.length - 1]?.content || ''
   });
-  const reply = enforceClosePolicy({
-    stage,
-    reply: receptionAligned.reply,
-    collectedFields: receptionAligned.collectedFields
-  });
-  const finalReply = enforceRecommendationPolicy({
-    stage,
-    reply,
-    recommendation
-  });
+  const bookingConsentGiven = Boolean(previousFields.bookingConsentGiven || bookingConsentThisTurn);
+  collectedFields.bookingConsentGiven = bookingConsentGiven;
+  const hasSlotSelected = hasSpecificSlot(collectedFields.availability || '') || hasSpecificSlot(message);
+  collectedFields.slotSelected = hasSlotSelected;
+  const slot = parseBookingSlot(collectedFields.availability || message);
+  const recommendation =
+    typeof modelTurn.recommendation === 'string' && modelTurn.recommendation.trim()
+      ? modelTurn.recommendation.trim()
+      : session.last_recommendation || null;
+  const reply =
+    (typeof modelTurn.reply === 'string' && modelTurn.reply.trim()) ||
+    'Te leo. ¿Quieres que empecemos por clases, horarios o precios?';
+  let finalReply = reply;
+  let leadCaptureRequested = false;
+
+  const alreadyCreatedLead = Boolean(previousFields.leadCreated || collectedFields.leadCreated);
+  const reservationKey = buildReservationKey(session.id, slot, collectedFields.contact);
+  const sameReservationAlreadyProcessed =
+    reservationKey && reservationKey === previousFields.lastReservationKey && alreadyCreatedLead;
+
+  const canCreateLead =
+    bookingConsentGiven &&
+    hasSlotSelected &&
+    hasFullName(collectedFields.name) &&
+    hasValidPhone(collectedFields.contact) &&
+    !sameReservationAlreadyProcessed &&
+    !alreadyCreatedLead;
+
+  let booking = previousFields.booking || null;
+
+  if (canCreateLead) {
+    try {
+      const lead = await createLead({
+        sessionId: session.id,
+        name: collectedFields.name,
+        contact: collectedFields.contact,
+        goal: collectedFields.goal || null,
+        availability: collectedFields.availability || null,
+        experienceLevel: collectedFields.experienceLevel || 'unknown',
+        notes: `Reserva chat Antonia. Slot: ${slot ? `${slot.day} ${slot.time}` : 'no detectado'}`,
+        recommendedPlan: recommendation || null
+      });
+
+      const integrations = await runPostBookingIntegrations({
+        payload: {
+          sessionId: session.id,
+          name: collectedFields.name,
+          contact: collectedFields.contact,
+          goal: collectedFields.goal || null,
+          availability: collectedFields.availability || null,
+          className: collectedFields.recommendedClass || null,
+          bookingDate: null,
+          recommendedPlan: recommendation || null,
+          bookingConfirmed: true,
+          bookingDay: slot?.day || null,
+          bookingTime: slot?.time || null
+        },
+        leadId: lead.id
+      });
+      booking = integrations?.booking || null;
+
+      collectedFields.leadCreated = true;
+      collectedFields.leadId = lead.id;
+      collectedFields.leadCreatedAt = new Date().toISOString();
+      collectedFields.lastReservationKey = reservationKey;
+      collectedFields.booking = booking;
+      collectedFields.bookingStatus = booking?.status || 'pending_manual';
+
+      if (!/reserv|confirmad|nos vemos|clase gratis|recepcion/i.test(finalReply)) {
+        const dayText = slot?.day ? slot.day.charAt(0).toUpperCase() + slot.day.slice(1) : 'el día acordado';
+        const timeText = slot?.time || 'la hora acordada';
+        if (booking?.status === 'reserved_external') {
+          finalReply = `${finalReply}\n\nPerfecto, ${collectedFields.name}. Te dejo reservada la clase de bienvenida para ${dayText} a las ${timeText}. Avisamos también a coaches por WhatsApp.`;
+        } else if (booking?.status === 'pending_manual') {
+          finalReply = `${finalReply}\n\nPerfecto, ${collectedFields.name}. Ya tengo tus datos para ${dayText} a las ${timeText}. Lo pasamos a recepción/coaches para cierre manual en Aimharder y te confirman por WhatsApp.`;
+        } else {
+          finalReply = `${finalReply}\n\nTengo tu reserva en proceso para ${dayText} a las ${timeText}. Si hay cualquier incidencia técnica, recepción te confirma por WhatsApp.`;
+        }
+      }
+    } catch (error) {
+      console.error('Error creando lead automático desde chat:', error?.message || error);
+      booking = {
+        status: 'failed_external',
+        reason: 'conversation_flow_exception'
+      };
+      collectedFields.booking = booking;
+      collectedFields.bookingStatus = 'failed_external';
+      if (!/no pude|error|fallo/i.test(finalReply)) {
+        finalReply = `${finalReply}\n\nMe falló el cierre automático de la reserva. Si quieres, te lo vuelvo a intentar ahora mismo.`;
+      }
+    }
+  }
 
   await saveMessage({ sessionId: session.id, role: 'user', content: message });
   await saveMessage({ sessionId: session.id, role: 'assistant', content: finalReply });
   await updateSession({
     sessionId: session.id,
     stage,
-    collectedFields: receptionAligned.collectedFields,
+    collectedFields,
     recommendation
   });
 
@@ -512,7 +469,8 @@ async function processChatTurn({ sessionId, message }) {
     sessionId: session.id,
     stage,
     leadCaptureRequested,
-    collectedFields: receptionAligned.collectedFields,
+    collectedFields,
+    booking,
     recommendation,
     kbSource: kb.source
   };

@@ -22,6 +22,8 @@ async function postChat(req, res) {
       sessionId: result.sessionId,
       stage: result.stage,
       leadCaptureRequested: result.leadCaptureRequested,
+      collectedFields: result.collectedFields,
+      booking: result.booking || null,
       recommendation: result.recommendation,
       timestamp: new Date().toISOString()
     });

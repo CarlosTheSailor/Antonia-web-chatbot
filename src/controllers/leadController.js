@@ -1,5 +1,6 @@
 const { createLead } = require('../services/leadService');
 const { trackLead } = require('../services/telemetryService');
+const { runPostBookingIntegrations } = require('../services/bookingIntegrationService');
 
 async function postLead(req, res) {
   const payload = req.body || {};
@@ -16,8 +17,16 @@ async function postLead(req, res) {
 
   try {
     const lead = await createLead(payload);
+    const integrations = await runPostBookingIntegrations({
+      payload,
+      leadId: lead.id
+    });
     trackLead({ ok: true, created: true });
-    return res.status(201).json({ ok: true, leadId: lead.id });
+    return res.status(201).json({
+      ok: true,
+      leadId: lead.id,
+      integrations
+    });
   } catch (error) {
     console.error('Error en /api/lead:', error?.message || error);
     trackLead({ ok: false, created: false });

@@ -34,17 +34,39 @@ async function fetchTable(table, orderBy) {
   return data || [];
 }
 
+async function fetchScheduleTable() {
+  if (!isSupabaseEnabled()) return null;
+
+  const { data, error } = await supabase
+    .from('kb_schedule')
+    .select('*')
+    .eq('active', true)
+    .order('day_of_week', { ascending: true })
+    .order('start_time', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
 async function getKnowledgeBase() {
   try {
     const [services, schedule, playbook, toneExamples] = await Promise.all([
       fetchTable('kb_services', 'priority'),
-      fetchTable('kb_schedule', 'day_of_week'),
+      fetchScheduleTable(),
       fetchTable('kb_playbook'),
       fetchTable('kb_tone_examples')
     ]);
 
     if (services && schedule && playbook && toneExamples) {
-      return { services, schedule, playbook, toneExamples, source: 'supabase' };
+      return {
+        services,
+        schedule,
+        playbook,
+        toneExamples,
+        programs: localKb.programs,
+        manifesto: localKb.manifesto,
+        source: 'supabase'
+      };
     }
   } catch (error) {
     console.error('KB fallback local por error Supabase:', error.message);
@@ -67,8 +89,7 @@ function buildKnowledgeSnapshot(kb) {
     .map((service) => `- ${service.name}: ${service.description} | Precio: ${service.price_text}`)
     .join('\n');
 
-  const scheduleText = kb.schedule
-    .slice(0, 16)
+  const scheduleText = (kb.schedule || [])
     .map(
       (slot) =>
         `- Dia ${slot.day_of_week}: ${slot.class_name} ${slot.start_time}-${slot.end_time} (${slot.level || 'todos niveles'})`

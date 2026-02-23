@@ -21,13 +21,18 @@ window.AntoniaChatbotConfig = {
     size: 66,
     borderColor: '#d8232a'
   },
+  assets: {
+    scheduleImageUrl: ''
+  },
   labels: {
     inputPlaceholder: 'Pregunta aquí lo que necesites',
     sendButton: 'Enviar',
     welcomeMessage:
       'Ey, soy Antonia 🐶\nTe ayudo con precios, horarios, tipos de clase (Cross, Funcional, Strong, Mobilitat...) y te digo cuál te encaja mejor según tu nivel.\nSi quieres, también te dejo cerrada la clase gratis de bienvenida (solo para venir a probar por primera vez).\n¿Qué necesitas hoy?',
     leadTitle: 'Te dejo la plaza preparada',
-    leadCta: 'Dejar contacto'
+    leadCta: 'Dejar contacto',
+    scheduleLinkCta:
+      'Y si quieres ver con más detalle todos los horarios y clases, haz clic [aquí](__SCHEDULE_URL__).'
   },
   debug: {
     showReset: true
