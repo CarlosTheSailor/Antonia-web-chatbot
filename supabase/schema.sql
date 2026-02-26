@@ -67,3 +67,28 @@ create table if not exists leads (
   status text default 'new',
   created_at timestamptz default now()
 );
+
+-- Seguridad: acceso solo por backend (service_role).
+-- No se habilitan politicas para anon/authenticated.
+alter table if exists kb_services enable row level security;
+alter table if exists kb_services force row level security;
+alter table if exists kb_schedule enable row level security;
+alter table if exists kb_schedule force row level security;
+alter table if exists kb_playbook enable row level security;
+alter table if exists kb_playbook force row level security;
+alter table if exists kb_tone_examples enable row level security;
+alter table if exists kb_tone_examples force row level security;
+alter table if exists chat_sessions enable row level security;
+alter table if exists chat_sessions force row level security;
+alter table if exists chat_messages enable row level security;
+alter table if exists chat_messages force row level security;
+alter table if exists leads enable row level security;
+alter table if exists leads force row level security;
+
+revoke all on table kb_services from anon, authenticated;
+revoke all on table kb_schedule from anon, authenticated;
+revoke all on table kb_playbook from anon, authenticated;
+revoke all on table kb_tone_examples from anon, authenticated;
+revoke all on table chat_sessions from anon, authenticated;
+revoke all on table chat_messages from anon, authenticated;
+revoke all on table leads from anon, authenticated;

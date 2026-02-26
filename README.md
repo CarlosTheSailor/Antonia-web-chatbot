@@ -34,9 +34,15 @@ PORT=3000
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
 SUPABASE_URL=https://tu-proyecto.supabase.co
-SUPABASE_ANON_KEY=tu_anon_key
 SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
 ```
+
+## Seguridad Supabase (backend-only)
+
+- Este proyecto usa Supabase **solo desde backend** con `SUPABASE_SERVICE_ROLE_KEY`.
+- El frontend **no** debe consultar tablas directamente por PostgREST.
+- Las tablas `kb_*`, `chat_sessions`, `chat_messages` y `leads` tienen RLS y no exponen acceso `anon/authenticated`.
+- Guarda `SUPABASE_SERVICE_ROLE_KEY` solo en entorno servidor (nunca en cliente).
 
 ## Setup
 
