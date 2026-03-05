@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smoke Test Aimharder Guest</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 24px;
+        background: #f5f6f8;
+        color: #111827;
+      }
+      .card {
+        max-width: 760px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+        padding: 20px;
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 0 0 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .row.full {
+        grid-column: 1 / -1;
+      }
+      label {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      input,
+      textarea,
+      button {
+        font: inherit;
+      }
+      input,
+      textarea {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 10px;
+      }
+      textarea {
+        min-height: 90px;
+        resize: vertical;
+      }
+      button {
+        border: none;
+        border-radius: 8px;
+        background: #111827;
+        color: #ffffff;
+        padding: 11px 14px;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      pre {
+        margin-top: 14px;
+        background: #0f172a;
+        color: #f8fafc;
+        border-radius: 10px;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+      }
+      .hint {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #6b7280;
+      }
+      @media (max-width: 680px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Smoke test Aimharder Guest</h1>
+      <p>
+        Prueba directa contra <code>POST /api/aimharder/smoke-booking-guest</code>.
+      </p>
+      <form id="smoke-form" class="grid">
+        <div class="row">
+          <label for="schedule_id">schedule_id *</label>
+          <input id="schedule_id" name="schedule_id" type="number" required />
+        </div>
+        <div class="row">
+          <label for="booking_date">booking_date (YYYY-MM-DD) *</label>
+          <input id="booking_date" name="booking_date" type="date" required />
+        </div>
+        <div class="row">
+          <label for="person_id">person_id *</label>
+          <input id="person_id" name="person_id" placeholder="p.ej. 608866" />
+        </div>
+        <div class="row">
+          <label for="phone">phone *</label>
+          <input id="phone" name="phone" placeholder="+34600000000" required />
+        </div>
+        <div class="row full">
+          <label for="name">name (nombre completo) *</label>
+          <input id="name" name="name" placeholder="Nombre Apellido" required />
+        </div>
+        <div class="row full">
+          <label for="email">email (opcional)</label>
+          <input id="email" name="email" type="email" />
+        </div>
+        <div class="row full">
+          <label for="booking_notes">booking_notes (opcional)</label>
+          <textarea id="booking_notes" name="booking_notes"></textarea>
+        </div>
+        <div class="row full">
+          <button type="submit" id="submit-btn">Lanzar smoke test</button>
+        </div>
+      </form>
+      <div class="hint">
+        Requiere <code>AIMHARDER_SMOKE_ENABLED=true</code> en <code>.env</code>.
+      </div>
+      <pre id="result">Esperando prueba...</pre>
+    </div>
+
+    <script>
+      const form = document.getElementById('smoke-form');
+      const result = document.getElementById('result');
+      const submitBtn = document.getElementById('submit-btn');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Probando...';
+
+        const payload = {
+          schedule_id: Number(form.schedule_id.value),
+          booking_date: form.booking_date.value,
+          person_id: form.person_id.value ? Number(form.person_id.value) : null,
+          name: form.name.value,
+          phone: form.phone.value,
+          email: form.email.value || null,
+          booking_notes: form.booking_notes.value || ''
+        };
+
+        try {
+          const response = await fetch('/api/aimharder/smoke-booking-guest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          result.textContent = JSON.stringify(
+            {
+              httpStatus: response.status,
+              ...data
+            },
+            null,
+            2
+          );
+        } catch (error) {
+          result.textContent = JSON.stringify(
+            {
+              httpStatus: 0,
+              ok: false,
+              error: error.message
+            },
+            null,
+            2
+          );
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Lanzar smoke test';
+        }
+      });
+    </script>
+  </body>
+</html>
+
